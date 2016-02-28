@@ -1,0 +1,152 @@
+---
+title: "Barbell lift Machine Learning Project"
+author: "Fndiaye"
+date: "Sunday, February 28, 2016"
+output: html_document
+---
+
+## Executive summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+The goal of this project is to predict the manner in which they did the exercise.
+The data used come from the  http://groupware.les.inf.puc-rio.br/har group.
+
+## Loading required packages
+```{r results='hide'}
+library(randomForest)
+library(caret)
+library(dplyr)
+```
+
+## Loading the data
+```{r}
+trainingset = read.csv("./pml-training.csv")
+quizztest = read.csv("./pml-testing.csv")
+```
+
+## Cleaning the data
+```{r}
+# We will first remove variables that have no variability since they will not be good predictors
+nzv <- nearZeroVar(trainingset, saveMetrics = TRUE)
+cols <- rownames(nzv[nzv[,4]==FALSE,])
+training <- subset(trainingset, select = c(cols))
+
+# Let's remove all columns with only NA or that are empty
+nbr <- nrow(training)
+thr <- nbr * 0.90
+NNAColumns <- !apply(training, 2, function(x) sum(is.na(x)) > thr  || sum(x=="") > thr)
+training <- training[, NNAColumns]
+
+nbRCols <- ncol(training)
+```
+
+The remaining number of colums is : `r nbRCols`
+
+Let's remove the 6 first variables that are not useful for creating a model since they relate to the username or to the date and time of the record
+```{r}
+training <- training[, 7:59]
+
+```
+
+## Assumptions
+We will divide the training set into a training and a test sets.
+
+
+After, we will use a cross validation:
+- Features will be created using the training set
+- The chosen model will be applied on the test set
+
+## Data partition and features selection
+```{r}
+training <- mutate(training, classe=factor(classe))
+inTrain = createDataPartition(training$classe, p = 0.7, list=FALSE)
+trainset = training[ inTrain,]
+testset = training[-inTrain,]
+
+# We will use 20% of the training set to find what are the most important variables
+
+forVarSel = createDataPartition(trainset$classe, p = 0.2, list=FALSE)
+trset <- trainset[forVarSel,]
+
+# Then, we calculate the most important variables using a random forest model
+fit <- train(classe ~ ., data = trset, method="rf", trControl = trainControl(method="cv", number=3),na.rm=TRUE)
+vImp <- varImp(fit)
+
+tab <- order(vImp$importance, decreasing = TRUE)
+ 
+selectCols <-  tab[1:20]
+dataset <- trainset
+trainset <- subset(trainset, select = c(selectCols, classe))
+
+```
+
+## Prediction functions
+In this part, we will create some prediction models using the training data set. Then, apply them to the test set.After that, we will compare the RMSE of each model and choose the best model to apply to the 20 test sets
+
+### Prediction models creation
+We will create several types of model: a Random Forest Model (RF) and a boosting with tree (GBM) model.
+After that, we will apply them to the testset and will compare their RMSE.
+We will choose as the best model the model with the best RMSE 
+
+
+```{r results='hide'}
+## RF model
+modelrf <- train(classe ~., data = trainset, method = "rf", trControl = trainControl(method="cv", number=3))
+finmod <- modelrf$finalModel
+
+## GBM model
+modelgbm <- train(classe ~., data = trainset, method = "gbm", trControl = trainControl(method="cv", number=3))
+finmod2 <- modelgbm$finalModel
+
+```
+
+### Model application on test set
+
+The RF model prediction on test set is:
+```{r}
+testrf <- predict(modelrf, testset)
+rfAcc <- postResample(testrf, testset$classe)
+```
+The accuracy for the RF model is: `r rfAcc`
+
+The GBM model prediction on test set is:
+```{r}
+testgbm <- predict(modelgbm, testset)
+gbmAcc <- postResample(testgbm, testset$classe)
+```
+The accuracy for the GBM model is: `r gbmAcc`
+
+We see that the Random Forest model has the best accuracy with 0.988 (against 0.949 for GBM model)
+
+### RMSE for each model
+```{r}
+rfMatrix <- confusionMatrix(testrf, testset$classe)
+rmserf <- 1-rfAcc[1]
+rfMatrix
+```
+
+The RMSE for the RF model is: `r rmserf`
+
+```{r}
+gbmMatrix <- confusionMatrix(testgbm, testset$classe)
+rmsegbm <- 1-gbmAcc[1]
+gbmMatrix
+```
+
+The RMSE for the LM model is: `r rmsegbm`
+
+## Conclusion
+
+The model with the best Accuracy and RMSE is the Random Forest  model since it has the smallest RMSE.
+
+## Submission
+```{r}
+quizzresult <- predict(modelrf, quizztest)
+quizzresult
+```
+
+## Appendix
+```{r}
+##The plot of the best final model
+plot(finmod, pch=19, cex=0.8)
+```
